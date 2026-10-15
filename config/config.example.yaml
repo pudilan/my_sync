@@ -23,6 +23,7 @@ sources:
 # with "/" they match the path relative to the source root.
 excludes:
   - .DS_Store
+  - .localized
   - Thumbs.db
   - "*.tmp"
   - "~$*"
@@ -30,8 +31,10 @@ excludes:
 
 # Archive password; empty disables encryption.
 password: ""
-# aes256 (7-Zip / WinRAR / Bandizip / macOS Archive Utility 等) or
-# zipcrypto (weak, but Windows Explorer can open it).
+# aes256: 7-Zip (7zz), WinRAR, Bandizip, Keka, The Unarchiver. Not supported
+#   by Info-ZIP `unzip` (macOS/Linux default, "unsupported compression method
+#   99"), macOS Archive Utility or Windows Explorer.
+# zipcrypto: weak, but every zip tool including `unzip` and Explorer opens it.
 encryption: aes256
 
 # deflate (compress) or store (no compression, faster for media files).

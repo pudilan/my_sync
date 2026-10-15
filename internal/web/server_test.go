@@ -59,9 +59,6 @@ func TestServer(t *testing.T) {
 	if c := do(s, "GET", "/healthz", false, nil).Code; c != http.StatusOK {
 		t.Fatalf("healthz: %d", c)
 	}
-	if c := do(s, "POST", "/api/run", true, map[string]string{"Origin": "http://evil.example"}).Code; c != http.StatusForbidden {
-		t.Fatalf("csrf: %d", c)
-	}
 	if c := do(s, "POST", "/api/run", true, nil).Code; c != http.StatusAccepted {
 		t.Fatalf("run: %d", c)
 	}
@@ -89,6 +86,15 @@ func TestServer(t *testing.T) {
 	for _, p := range []string{"/download/" + id + "/..%2F..%2Fconfig.yaml", "/download/x/index.json", "/backups/..%2F"} {
 		if c := do(s, "GET", p, true, nil).Code; c != http.StatusNotFound {
 			t.Errorf("GET %s: %d, want 404", p, c)
+		}
+	}
+}
+
+func TestCrossOriginPostAllowed(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	for _, origin := range []string{"http://localhost:3000", "null"} {
+		if c := do(s, "POST", "/api/cancel", true, map[string]string{"Origin": origin}).Code; c != http.StatusOK {
+			t.Errorf("Origin %s: %d", origin, c)
 		}
 	}
 }

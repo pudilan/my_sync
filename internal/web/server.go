@@ -11,8 +11,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"net/url"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -93,10 +91,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if r.Method == http.MethodPost && !sameOrigin(r) {
-		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
-		return
-	}
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	s.mux.ServeHTTP(w, r)
@@ -111,20 +105,6 @@ func (s *Server) authorized(r *http.Request) bool {
 	return ok &&
 		subtle.ConstantTimeCompare([]byte(u), []byte(ui.Username)) == 1 &&
 		subtle.ConstantTimeCompare([]byte(p), []byte(ui.Password)) == 1
-}
-
-// sameOrigin rejects browser POSTs coming from other sites (CSRF). Requests
-// without Origin/Referer (curl, scripts) are allowed.
-func sameOrigin(r *http.Request) bool {
-	src := r.Header.Get("Origin")
-	if src == "" {
-		src = r.Header.Get("Referer")
-	}
-	if src == "" {
-		return true
-	}
-	u, err := url.Parse(src)
-	return err == nil && u.Host == r.Host
 }
 
 func (s *Server) render(w http.ResponseWriter, page string, data map[string]any) {
@@ -254,7 +234,7 @@ func formFromConfig(c config.Config) configForm {
 	for _, s := range c.Sources {
 		src = append(src, s.Name+" = "+s.Path)
 	}
-	_, uiEnv := os.LookupEnv(config.EnvUIPassword)
+	_, uiEnv := config.EnvSet(config.EnvUIPassword)
 	return configForm{
 		Sources:       strings.Join(src, "\n"),
 		Excludes:      strings.Join(c.Excludes, "\n"),

@@ -132,7 +132,8 @@ missing). See `config/config.example.yaml` for all keys:
 | `listen` | UI address, default `:8080` |
 
 Environment overrides: `MYSYNC_PASSWORD`, `MYSYNC_UI_USER`, `MYSYNC_UI_PASSWORD`,
-`MYSYNC_LISTEN`.
+`MYSYNC_LISTEN`. Empty values are
+ignored, so they never wipe values from `config.yaml`.
 
 ## Backing up with limited disk space
 
@@ -172,7 +173,20 @@ against its SHA-256 and gets its original mtime back.
 ## Restoring manually
 
 Every volume is a normal zip. Open it with 7-Zip / WinRAR / Bandizip / Keka
-(AES-256) or any zip tool (ZipCrypto) and enter the password. To get the latest
+(AES-256) or any zip tool (ZipCrypto) and enter the password.
+
+AES-256 volumes cannot be extracted with Info-ZIP `unzip` (the default
+`unzip` on macOS and Linux), macOS Archive Utility or Windows Explorer; they
+report `unsupported compression method 99`. Use instead:
+
+```bash
+7zz x backup_20261015-165625_001.zip      # macOS: brew install sevenzip
+7z x backup_20261015-165625_001.zip       # Linux: apt install 7zip / p7zip-full
+my_sync restore -config config.yaml -to /restore
+```
+
+or choose `encryption: zipcrypto` if `unzip` / Explorer compatibility matters
+more than encryption strength (applies to new backups only). To get the latest
 state of everything, extract the volumes of all backups in chronological order,
 or look up a file in **文件索引** (or `files` in the newest `index.json`) to find
 the backup directory and volume that contains it.

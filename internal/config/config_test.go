@@ -85,3 +85,25 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Error("duplicate source names should be rejected")
 	}
 }
+
+func TestEmptyEnvDoesNotOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	s, _ := Load(path)
+	c := s.File()
+	c.Password = "pw"
+	c.UI = UIConfig{Username: "u", Password: "p"}
+	if err := s.Update(c); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{EnvPassword, EnvUIUser, EnvUIPassword} {
+		t.Setenv(k, "")
+	}
+	s2, _ := Load(path)
+	got := s2.Get()
+	if got.Password != "pw" || got.UI.Password != "p" || got.UI.Username != "u" {
+		t.Errorf("empty env vars overrode config: %+v", got)
+	}
+	if PasswordFromEnv() {
+		t.Error("empty MYSYNC_PASSWORD reported as set")
+	}
+}

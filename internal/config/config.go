@@ -77,7 +77,7 @@ func Default() Config {
 		Encryption:  EncryptionAES256,
 		Compression: CompressionDeflate,
 		VolumeSize:  "1GB",
-		Excludes:    []string{".DS_Store", "Thumbs.db", "*.tmp", "~$*"},
+		Excludes:    []string{".DS_Store", ".localized", "Thumbs.db", "*.tmp", "~$*"},
 	}
 }
 
@@ -177,18 +177,26 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// EnvSet reports the value of an environment variable that is set and not
+// empty. Empty values are ignored so that docker-compose entries such as
+// MYSYNC_PASSWORD: ${MYSYNC_PASSWORD:-} do not wipe values from the file.
+func EnvSet(name string) (string, bool) {
+	v := os.Getenv(name)
+	return v, v != ""
+}
+
 // ApplyEnv overrides secrets and listen address from environment variables.
 func (c *Config) ApplyEnv() {
-	if v, ok := os.LookupEnv(EnvPassword); ok {
+	if v, ok := EnvSet(EnvPassword); ok {
 		c.Password = v
 	}
-	if v, ok := os.LookupEnv(EnvUIUser); ok {
+	if v, ok := EnvSet(EnvUIUser); ok {
 		c.UI.Username = v
 	}
-	if v, ok := os.LookupEnv(EnvUIPassword); ok {
+	if v, ok := EnvSet(EnvUIPassword); ok {
 		c.UI.Password = v
 	}
-	if v, ok := os.LookupEnv(EnvListen); ok && v != "" {
+	if v, ok := EnvSet(EnvListen); ok {
 		c.Listen = v
 	}
 }
@@ -374,7 +382,7 @@ func (s *Store) Update(c Config) error {
 
 // PasswordFromEnv reports whether the archive password comes from the env.
 func PasswordFromEnv() bool {
-	_, ok := os.LookupEnv(EnvPassword)
+	_, ok := EnvSet(EnvPassword)
 	return ok
 }
 

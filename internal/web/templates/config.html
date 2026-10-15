@@ -39,7 +39,7 @@
       {{if .Form.HasPassword}}<label class="check"><input type="checkbox" name="clear_password" value="1"> 清除密码 (不加密)</label>{{end}}
     </div>
     <div>
-      <label>加密算法 <small>AES-256 更安全 (7-Zip/WinRAR 可解)；ZipCrypto 兼容 Windows 自带解压但较弱</small></label>
+      <label>加密算法 <small>AES-256 更安全，需用 7-Zip/WinRAR/Keka 解压 (系统自带 unzip、macOS 归档实用工具不支持)；ZipCrypto 任何解压工具都能打开但较弱</small></label>
       <select name="encryption">
         <option value="aes256" {{if eq .Form.Encryption "aes256"}}selected{{end}}>AES-256</option>
         <option value="zipcrypto" {{if eq .Form.Encryption "zipcrypto"}}selected{{end}}>ZipCrypto</option>
