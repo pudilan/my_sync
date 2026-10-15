@@ -3,3 +3,4 @@
 /config/config.yaml
 /.env
 /.playwright-mcp/
+/docker-compose.yaml
