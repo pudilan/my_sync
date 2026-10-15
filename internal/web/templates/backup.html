@@ -1,0 +1,77 @@
+{{define "title"}}备份 {{.Ix.BackupID}}{{end}}
+{{define "content"}}
+<p><a href="/">← 返回概览</a></p>
+<section class="grid2">
+  <div class="card">
+    <h2>备份 <code>{{.Ix.BackupID}}</code></h2>
+    <dl class="kv">
+      <dt>开始</dt><dd>{{ftime .Ix.StartedAt}}</dd>
+      <dt>完成</dt><dd>{{ftime .Ix.FinishedAt}} (耗时 {{dur .Ix.StartedAt .Ix.FinishedAt}})</dd>
+      <dt>上一次备份</dt><dd>{{if .Ix.PreviousID}}<a href="/backups/{{.Ix.PreviousID}}">{{.Ix.PreviousID}}</a>{{else}}无 (全量){{end}}</dd>
+      <dt>源目录</dt><dd>{{range .Ix.Sources}}<div><code>{{.Name}}</code> ← {{.Path}}</div>{{end}}</dd>
+      <dt>加密</dt><dd>{{if .Ix.Encrypted}}{{encLabel .Ix.Encryption}}{{else}}未加密{{end}}</dd>
+      <dt>压缩 / 分卷</dt><dd>{{.Ix.Compression}} / {{if .Ix.VolumeSize}}{{size .Ix.VolumeSize}}{{else}}不拆分{{end}}</dd>
+      <dt>单次上限</dt><dd>{{if .Ix.MaxSize}}{{size .Ix.MaxSize}}{{else}}不限制{{end}}</dd>
+      <dt>变更</dt><dd><span class="op-added">新增 {{.Ix.Stats.Added}}</span> · <span class="op-modified">修改 {{.Ix.Stats.Modified}}</span> · <span class="op-deleted">删除 {{.Ix.Stats.Deleted}}</span> · 原始 {{size .Ix.Stats.Bytes}}</dd>
+      {{if .Ix.Stats.Deferred}}<dt>延后</dt><dd class="warn">{{.Ix.Stats.Deferred}} 个文件 ({{size .Ix.Stats.DeferredBytes}}) 因单次上限留到下次备份</dd>{{end}}
+      <dt>备份后跟踪</dt><dd>{{.Ix.Stats.TotalFiles}} 个文件, {{size .Ix.Stats.TotalBytes}}</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h2>压缩包 <small class="muted">每个均可单独解压</small></h2>
+    {{if .Ix.Volumes}}
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>文件</th><th>大小</th><th>文件数</th></tr></thead>
+      <tbody>
+      {{$id := .Ix.BackupID}}
+      {{range .Ix.Volumes}}
+        <tr><td><a href="/download/{{$id}}/{{.Name}}">{{.Name}}</a><div class="hash" title="SHA-256">{{.SHA256}}</div></td><td class="num">{{size .Size}}</td><td class="num">{{.Files}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{else}}<p class="muted">本次仅记录删除，未生成压缩包。</p>{{end}}
+    <p><a class="btn small" href="/download/{{.Ix.BackupID}}/index.json">下载数据库 index.json</a></p>
+  </div>
+</section>
+
+{{if .Ix.Warnings}}
+<section class="card">
+  <h2 class="warn">超过单次备份上限的文件 ({{len .Ix.Warnings}})</h2>
+  <ul class="errors">{{range .Ix.Warnings}}<li>{{.}}</li>{{end}}</ul>
+</section>
+{{end}}
+
+{{if .Ix.Errors}}
+<section class="card">
+  <h2 class="warn">读取失败的文件 ({{len .Ix.Errors}})</h2>
+  <ul class="errors">{{range .Ix.Errors}}<li>{{.}}</li>{{end}}</ul>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>变更明细</h2>
+  <form class="filter" method="get">
+    <input type="search" name="q" value="{{.Q}}" placeholder="按路径搜索">
+    <select name="op">
+      <option value="">全部 ({{len .Ix.Changes}})</option>
+      <option value="added" {{if eq .Op "added"}}selected{{end}}>新增 ({{index .Counts "added"}})</option>
+      <option value="modified" {{if eq .Op "modified"}}selected{{end}}>修改 ({{index .Counts "modified"}})</option>
+      <option value="deleted" {{if eq .Op "deleted"}}selected{{end}}>删除 ({{index .Counts "deleted"}})</option>
+    </select>
+    <button class="btn">筛选</button>
+  </form>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>类型</th><th>路径</th><th>大小</th><th>所在压缩包</th></tr></thead>
+    <tbody>
+    {{range .Changes}}
+      <tr><td><span class="tag {{opClass .Op}}">{{op .Op}}</span></td><td class="path">{{.Path}}</td><td class="num">{{if .Size}}{{size .Size}}{{end}}</td><td>{{.Volume}}</td></tr>
+    {{else}}<tr><td colspan="4" class="muted">无匹配记录</td></tr>{{end}}
+    </tbody>
+  </table>
+  </div>
+  {{template "pager" .Pager}}
+</section>
+{{end}}

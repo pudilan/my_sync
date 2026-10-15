@@ -1,0 +1,27 @@
+services:
+  my_sync:
+    build:
+      context: .
+      args:
+        # Use a closer Go module proxy if needed, e.g. https://goproxy.cn,direct
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    image: my_sync:latest
+    container_name: my_sync
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    environment:
+      TZ: Asia/Shanghai
+      # Secrets from .env (see .env.example); they override config.yaml.
+      MYSYNC_PASSWORD: ${MYSYNC_PASSWORD:-}
+      MYSYNC_UI_USER: ${MYSYNC_UI_USER:-admin}
+      MYSYNC_UI_PASSWORD: ${MYSYNC_UI_PASSWORD:-}
+    volumes:
+      # config.yaml lives here; a default one is created on first start.
+      - ./config:/config
+      # Backup output (dest: /backups in config.yaml).
+      - ./backups:/backups
+      # Directories to back up, mounted read-only. Reference the container
+      # paths in config.yaml, e.g. "docs = /data/docs".
+      - /path/to/docs:/data/docs:ro
+      - /path/to/photos:/data/photos:ro

@@ -1,0 +1,5 @@
+/my_sync
+/backups/
+/config/config.yaml
+/.env
+/.playwright-mcp/

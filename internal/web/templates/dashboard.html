@@ -1,0 +1,60 @@
+{{define "title"}}概览{{end}}
+{{define "content"}}
+<section class="grid2">
+  <div class="card">
+    <h2>备份配置</h2>
+    <dl class="kv">
+      <dt>源目录</dt>
+      <dd>{{range .Cfg.Sources}}<div><code>{{.Name}}</code> ← {{.Path}}</div>{{else}}<span class="muted">未配置，请到 <a href="/config">配置</a> 页添加</span>{{end}}</dd>
+      <dt>输出目录</dt><dd>{{.Cfg.Dest}}</dd>
+      <dt>分卷大小</dt><dd>{{.VolumeLbl}}</dd>
+      <dt>单次备份上限</dt><dd>{{.MaxLbl}}</dd>
+      <dt>压缩包密码</dt><dd>{{if .Cfg.Password}}已设置 ({{encLabel .Cfg.Encryption}}){{else}}<span class="warn">未设置 (不加密)</span>{{end}}</dd>
+      <dt>压缩方式</dt><dd>{{.Cfg.Compression}}</dd>
+      <dt>定时计划</dt><dd>{{if .Status.Schedule}}{{.Status.Schedule}} · 下次 {{ftime .Status.NextRun}}{{else}}<span class="muted">未启用</span>{{end}}</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h2>操作</h2>
+    <div class="actions">
+      <button class="btn primary" data-run="0">立即备份</button>
+      <button class="btn" data-run="1">预览增量</button>
+      <button class="btn danger" id="cancel-btn" hidden>取消任务</button>
+    </div>
+    <div id="run-status" class="run-status"><span class="muted">加载中…</span></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>任务日志</h2>
+  <pre id="run-log" class="log"></pre>
+  <div id="preview"></div>
+</section>
+
+<section class="card">
+  <h2>备份历史 <small class="muted">{{len .Backups}} 次</small></h2>
+  {{if .Backups}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>备份 ID</th><th>完成时间</th><th>新增</th><th>修改</th><th>删除</th><th>归档大小</th><th>压缩包</th><th>跟踪文件</th><th>延后</th><th>错误</th></tr></thead>
+    <tbody>
+    {{range .Backups}}
+      <tr>
+        <td><a href="/backups/{{.BackupID}}"><code>{{.BackupID}}</code></a></td>
+        <td>{{ftime .FinishedAt}}</td>
+        <td class="num op-added">{{.Stats.Added}}</td>
+        <td class="num op-modified">{{.Stats.Modified}}</td>
+        <td class="num op-deleted">{{.Stats.Deleted}}</td>
+        <td class="num">{{size .Stats.Bytes}}</td>
+        <td class="num">{{len .Volumes}} 个 / {{size .Stats.ArchiveBytes}}</td>
+        <td class="num">{{.Stats.TotalFiles}}</td>
+        <td class="num">{{if .Stats.Deferred}}<span class="warn" title="因单次备份上限留到下次">{{.Stats.Deferred}} / {{size .Stats.DeferredBytes}}</span>{{else}}0{{end}}</td>
+        <td class="num">{{if .Stats.Errors}}<span class="warn">{{.Stats.Errors}}</span>{{else}}0{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}<p class="muted">暂无备份。</p>{{end}}
+</section>
+{{end}}

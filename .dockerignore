@@ -1,0 +1,6 @@
+.git
+backups
+config/config.yaml
+.env
+my_sync
+*.zip

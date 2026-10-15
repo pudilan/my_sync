@@ -1,0 +1,72 @@
+{{define "title"}}配置{{end}}
+{{define "content"}}
+{{if .Saved}}<div class="alert ok">配置已保存，下次备份生效。</div>{{end}}
+<form class="card form" method="post" action="/config">
+  <h2>备份配置 <small class="muted">{{.ConfigPath}}</small></h2>
+
+  <label>源目录 <small>每行一个，格式 <code>名称 = 路径</code>；名称作为压缩包内的顶层目录，省略时取目录名</small></label>
+  <textarea name="sources" rows="4" placeholder="docs = /data/src/docs&#10;photos = /data/src/photos">{{.Form.Sources}}</textarea>
+
+  <label>输出目录 <small>每次备份在此目录下生成 <code>YYYYMMDD-HHMMSS/</code> 子目录，内含压缩包与数据库</small></label>
+  <input name="dest" value="{{.Form.Dest}}" required>
+
+  <div class="row">
+    <div>
+      <label>压缩包前缀</label>
+      <input name="prefix" value="{{.Form.Prefix}}">
+    </div>
+    <div>
+      <label>分卷大小 <small>如 500MB / 2GB，留空或 0 不拆分</small></label>
+      <input name="volume_size" value="{{.Form.VolumeSize}}">
+    </div>
+    <div>
+      <label>单次备份上限 <small>如 50GB；超出部分留到下次备份，留空不限制</small></label>
+      <input name="max_backup_size" value="{{.Form.MaxBackupSize}}">
+    </div>
+    <div>
+      <label>压缩方式</label>
+      <select name="compression">
+        <option value="deflate" {{if eq .Form.Compression "deflate"}}selected{{end}}>deflate (压缩)</option>
+        <option value="store" {{if eq .Form.Compression "store"}}selected{{end}}>store (仅打包)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>压缩包密码 <small>{{if .Form.PasswordEnv}}当前由环境变量 MYSYNC_PASSWORD 提供{{else if .Form.HasPassword}}已设置，留空保持不变{{else}}未设置{{end}}</small></label>
+      <input type="password" name="password" autocomplete="new-password" placeholder="{{if .Form.HasPassword}}••••••{{end}}">
+      {{if .Form.HasPassword}}<label class="check"><input type="checkbox" name="clear_password" value="1"> 清除密码 (不加密)</label>{{end}}
+    </div>
+    <div>
+      <label>加密算法 <small>AES-256 更安全 (7-Zip/WinRAR 可解)；ZipCrypto 兼容 Windows 自带解压但较弱</small></label>
+      <select name="encryption">
+        <option value="aes256" {{if eq .Form.Encryption "aes256"}}selected{{end}}>AES-256</option>
+        <option value="zipcrypto" {{if eq .Form.Encryption "zipcrypto"}}selected{{end}}>ZipCrypto</option>
+      </select>
+    </div>
+  </div>
+
+  <label>排除规则 <small>每行一个；不含 <code>/</code> 时匹配任意层级的文件/目录名 (如 <code>*.tmp</code>、<code>node_modules</code>)，含 <code>/</code> 时匹配相对源目录的路径 (如 <code>logs/*.log</code>)</small></label>
+  <textarea name="excludes" rows="4">{{.Form.Excludes}}</textarea>
+
+  <label>定时计划 <small>留空关闭；<code>6h</code> / <code>30m</code> 表示固定间隔；<code>02:30</code> 表示每天定时</small></label>
+  <input name="schedule" value="{{.Form.Schedule}}">
+
+  <h3>管理界面登录</h3>
+  <div class="row">
+    <div>
+      <label>用户名 <small>用户名和密码都设置时启用 Basic Auth</small></label>
+      <input name="ui_user" value="{{.Form.UIUser}}" autocomplete="username">
+    </div>
+    <div>
+      <label>密码 <small>{{if .Form.UIEnv}}当前由环境变量 MYSYNC_UI_PASSWORD 提供{{else if .Form.HasUIPassword}}已设置，留空保持不变{{else}}未设置{{end}}</small></label>
+      <input type="password" name="ui_password" autocomplete="new-password">
+      {{if .Form.HasUIPassword}}<label class="check"><input type="checkbox" name="clear_ui_password" value="1"> 清除登录密码</label>{{end}}
+    </div>
+  </div>
+  <p class="muted">监听地址 <code>{{.Form.Listen}}</code> 修改需编辑配置文件并重启。</p>
+
+  <div class="actions"><button class="btn primary" type="submit">保存配置</button></div>
+</form>
+{{end}}

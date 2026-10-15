@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}my_sync{{end}} · my_sync</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="/">my_sync <span>增量备份</span></a>
+    <nav>
+      <a href="/" {{if eq .Page "dashboard"}}class="active"{{end}}>概览</a>
+      <a href="/files" {{if eq .Page "files"}}class="active"{{end}}>文件索引</a>
+      <a href="/config" {{if eq .Page "config"}}class="active"{{end}}>配置</a>
+    </nav>
+    <span class="run-pill {{if .Running}}busy{{end}}" id="run-pill">{{if .Running}}备份中…{{else}}空闲{{end}}</span>
+  </div>
+</header>
+<main class="wrap">
+{{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+{{template "content" .}}
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
+{{define "pager"}}
+{{if gt .Pages 1}}
+<div class="pager">
+  {{if .Prev}}<a class="btn small" href="{{.Prev}}">上一页</a>{{end}}
+  <span>第 {{.Page}} / {{.Pages}} 页 · 共 {{.Total}} 条</span>
+  {{if .Next}}<a class="btn small" href="{{.Next}}">下一页</a>{{end}}
+</div>
+{{else}}<div class="pager"><span>共 {{.Total}} 条</span></div>{{end}}
+{{end}}

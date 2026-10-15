@@ -1,0 +1,24 @@
+{{define "title"}}文件索引{{end}}
+{{define "content"}}
+<section class="card">
+  <h2>文件索引 {{if .Ix}}<small class="muted">基于最新备份 <a href="/backups/{{.Ix.BackupID}}">{{.Ix.BackupID}}</a> · {{.Ix.Stats.TotalFiles}} 个文件 · {{size .Ix.Stats.TotalBytes}}</small>{{end}}</h2>
+  <p class="muted">列出当前已备份的每个文件及其最新版本所在的备份目录与压缩包，恢复时按此定位。</p>
+  {{if .Ix}}
+  <form class="filter" method="get">
+    <input type="search" name="q" value="{{.Q}}" placeholder="按路径搜索">
+    <button class="btn">搜索</button>
+  </form>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>路径</th><th>大小</th><th>修改时间</th><th>所在备份</th><th>压缩包</th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr><td class="path" title="SHA-256 {{.SHA256}}">{{.Path}}</td><td class="num">{{size .Size}}</td><td>{{ftime .MTime}}</td><td><a href="/backups/{{.Backup}}">{{.Backup}}</a></td><td>{{.Volume}}</td></tr>
+    {{else}}<tr><td colspan="5" class="muted">无匹配文件</td></tr>{{end}}
+    </tbody>
+  </table>
+  </div>
+  {{template "pager" .Pager}}
+  {{else}}<p class="muted">暂无备份。</p>{{end}}
+</section>
+{{end}}

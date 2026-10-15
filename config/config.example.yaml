@@ -1,0 +1,57 @@
+# my_sync configuration (copy to config.yaml)
+# Secrets can also be supplied via env: MYSYNC_PASSWORD, MYSYNC_UI_USER, MYSYNC_UI_PASSWORD
+
+# Web UI listen address (change requires restart).
+listen: ":8080"
+
+# Output directory. Each backup run with changes creates a sub directory
+# YYYYMMDD-HHMMSS/ containing the zip volumes and index.json (the database).
+dest: /backups
+
+# Archive name prefix: <prefix>_<backup id>_001.zip
+prefix: backup
+
+# Directories to back up. "name" becomes the top-level folder inside the
+# archives (defaults to the directory name).
+sources:
+  - name: docs
+    path: /data/docs
+  - name: photos
+    path: /data/photos
+
+# Exclude patterns. Without "/" they match any file/dir name at any depth;
+# with "/" they match the path relative to the source root.
+excludes:
+  - .DS_Store
+  - Thumbs.db
+  - "*.tmp"
+  - "~$*"
+  - node_modules
+
+# Archive password; empty disables encryption.
+password: ""
+# aes256 (7-Zip / WinRAR / Bandizip / macOS Archive Utility 等) or
+# zipcrypto (weak, but Windows Explorer can open it).
+encryption: aes256
+
+# deflate (compress) or store (no compression, faster for media files).
+compression: deflate
+
+# Maximum size of each zip volume, e.g. 500MB, 4GB. Empty or 0 = no split.
+# Every volume is a complete zip that can be extracted on its own; a single
+# file larger than this gets a volume of its own.
+volume_size: 1GB
+
+# Maximum archive bytes written by a single backup run, e.g. 50GB. Changed
+# files that do not fit are left for the next run, so a large initial backup
+# can be spread over several runs when disk space is short. Empty or 0 = no
+# limit. A single file larger than this cannot be backed up.
+max_backup_size: ""
+
+# Automatic backups: empty = off, "6h" / "30m" = interval, "02:30" = daily.
+schedule: "02:30"
+
+# Basic auth for the web UI (enabled when both are set).
+ui:
+  username: admin
+  password: ""
