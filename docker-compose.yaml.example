@@ -12,8 +12,8 @@ services:
       - "8082:8080"
     environment:
       TZ: Asia/Shanghai
-      # Secrets from .env (see .env.example); they override config.yaml.
-      MYSYNC_PASSWORD: ${MYSYNC_PASSWORD:-}
+      # Web UI login from .env (see .env.example). The archive password is
+      # set in config.yaml / the config page.
       MYSYNC_UI_USER: ${MYSYNC_UI_USER:-admin}
       MYSYNC_UI_PASSWORD: ${MYSYNC_UI_PASSWORD:-}
     volumes:

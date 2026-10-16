@@ -15,6 +15,8 @@ import (
 
 func newTestServer(t *testing.T) (*Server, *service.Service, config.Config) {
 	t.Helper()
+	t.Setenv(config.EnvUIUser, "u")
+	t.Setenv(config.EnvUIPassword, "p")
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	os.MkdirAll(src, 0o755)
@@ -26,7 +28,6 @@ func newTestServer(t *testing.T) (*Server, *service.Service, config.Config) {
 	c := store.File()
 	c.Dest = filepath.Join(dir, "out")
 	c.Sources = []config.Source{{Name: "src", Path: src}}
-	c.UI = config.UIConfig{Username: "u", Password: "p"}
 	if err := store.Update(c); err != nil {
 		t.Fatal(err)
 	}
@@ -96,5 +97,22 @@ func TestCrossOriginPostAllowed(t *testing.T) {
 		if c := do(s, "POST", "/api/cancel", true, map[string]string{"Origin": origin}).Code; c != http.StatusOK {
 			t.Errorf("Origin %s: %d", origin, c)
 		}
+	}
+}
+
+func TestConfigPageHasNoUICredentials(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	body := do(s, "GET", "/config", true, nil).Body.String()
+	for _, field := range []string{`name="ui_user"`, `name="ui_password"`} {
+		if strings.Contains(body, field) {
+			t.Errorf("config page still contains %s", field)
+		}
+	}
+	if !strings.Contains(body, "MYSYNC_UI_USER") {
+		t.Error("config page should explain the env based login")
+	}
+	t.Setenv(config.EnvUIPassword, "")
+	if c := do(s, "GET", "/", false, nil).Code; c != http.StatusOK {
+		t.Errorf("auth should be off without MYSYNC_UI_PASSWORD, got %d", c)
 	}
 }

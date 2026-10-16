@@ -109,9 +109,10 @@ func cmdServe(args []string) error {
 		srv.Shutdown(shutdown)
 	}()
 	log.Printf("my_sync %s 管理界面监听 %s, 配置文件 %s", version, cfg.Listen, store.Path())
-	if cfg.UI.Username == "" || cfg.UI.Password == "" {
-		log.Printf("警告: 未设置管理界面登录密码 (MYSYNC_UI_USER / MYSYNC_UI_PASSWORD)")
+	if _, _, enabled := config.UICredentials(); !enabled {
+		log.Printf("警告: 未设置管理界面登录账号 (环境变量 MYSYNC_UI_USER / MYSYNC_UI_PASSWORD)")
 	}
+	warnLegacyPasswordEnv()
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -120,6 +121,14 @@ func cmdServe(args []string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return nil
+}
+
+// warnLegacyPasswordEnv flags MYSYNC_PASSWORD, which older versions used to
+// override the archive password and which is now ignored.
+func warnLegacyPasswordEnv() {
+	if _, ok := config.EnvSet(config.EnvLegacyPassword); ok {
+		log.Printf("警告: 环境变量 %s 已不再生效，压缩包密码以配置文件 / 管理页面为准", config.EnvLegacyPassword)
+	}
 }
 
 type cliReporter struct{ last time.Time }
@@ -143,6 +152,7 @@ func cmdBackup(args []string) error {
 	if err != nil {
 		return err
 	}
+	warnLegacyPasswordEnv()
 	ctx, stop := signalContext()
 	defer stop()
 	res, err := backup.Run(ctx, store.Get(), backup.Options{DryRun: *dry}, &cliReporter{})
@@ -196,6 +206,7 @@ func cmdRestore(args []string) error {
 	if err != nil {
 		return err
 	}
+	warnLegacyPasswordEnv()
 	cfg := store.Get()
 	ctx, stop := signalContext()
 	defer stop()

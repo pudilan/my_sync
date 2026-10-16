@@ -21,7 +21,7 @@ binary, deployable with Docker.
   several runs when disk space is short.
 - Web UI: overview, run / preview / cancel backups with live progress and logs,
   backup history, per-backup change list and volume download, file index search,
-  configuration editor. Optional basic auth.
+  configuration editor. Optional basic auth via environment variables.
 - Built-in scheduler (interval or daily time), CLI, and an index-driven restore.
 
 ## Output layout
@@ -98,7 +98,8 @@ enough to restore that point in time.
 ## Quick start with Docker
 
 ```bash
-cp .env.example .env              # set archive + UI passwords
+cp .env.example .env                              # set the web UI login
+cp docker-compose.yaml.example docker-compose.yaml
 # edit docker-compose.yaml: mount the directories to back up (read-only)
 docker compose up -d --build
 ```
@@ -128,12 +129,21 @@ missing). See `config/config.example.yaml` for all keys:
 | `volume_size` | e.g. `500MB`, `4GB`; empty/`0` = no split |
 | `max_backup_size` | archive bytes per run, e.g. `50GB`; empty/`0` = unlimited |
 | `schedule` | empty = off, `6h` = every 6 hours, `02:30` = daily |
-| `ui.username` / `ui.password` | enable basic auth for the web UI |
 | `listen` | UI address, default `:8080` |
 
-Environment overrides: `MYSYNC_PASSWORD`, `MYSYNC_UI_USER`, `MYSYNC_UI_PASSWORD`,
-`MYSYNC_LISTEN`. Empty values are
-ignored, so they never wipe values from `config.yaml`.
+The archive password is configured only in `config.yaml` or on the config
+page; the `MYSYNC_PASSWORD` environment variable is no longer read (a warning
+is logged if it is still set).
+
+Environment variables:
+
+| variable | description |
+|---|---|
+| `MYSYNC_UI_USER` / `MYSYNC_UI_PASSWORD` | web UI basic auth, enabled when both are set; the only way to configure the login (restart to change) |
+| `MYSYNC_LISTEN` | overrides `listen` |
+| `MYSYNC_CONFIG` | config file path |
+
+Empty values count as unset.
 
 ## Backing up with limited disk space
 

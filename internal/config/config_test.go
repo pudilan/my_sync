@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,10 +76,10 @@ func TestStoreRoundTrip(t *testing.T) {
 	if got.Sources[0].Name != "docs" || got.Sources[1].Path != "/data/photos" || got.Password != "pw" {
 		t.Errorf("round trip: %+v", got)
 	}
-	t.Setenv(EnvPassword, "fromenv")
+	t.Setenv(EnvLegacyPassword, "fromenv")
 	s3, _ := Load(path)
-	if s3.Get().Password != "fromenv" || s3.File().Password != "pw" {
-		t.Error("env override not applied correctly")
+	if s3.Get().Password != "pw" {
+		t.Error("MYSYNC_PASSWORD must not override the archive password")
 	}
 	c.Sources = append(c.Sources, Source{Name: "docs", Path: "/other"})
 	if err := s.Update(c); err == nil {
@@ -86,24 +87,37 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
-func TestEmptyEnvDoesNotOverride(t *testing.T) {
+func TestUICredentialsFromEnv(t *testing.T) {
+	t.Setenv(EnvUIUser, "")
+	t.Setenv(EnvUIPassword, "")
+	if _, _, ok := UICredentials(); ok {
+		t.Error("empty env vars must not enable auth")
+	}
+	t.Setenv(EnvUIUser, "admin")
+	if _, _, ok := UICredentials(); ok {
+		t.Error("auth needs both user and password")
+	}
+	t.Setenv(EnvUIPassword, "secret")
+	if u, p, ok := UICredentials(); !ok || u != "admin" || p != "secret" {
+		t.Errorf("credentials = %q %q %v", u, p, ok)
+	}
+}
+
+func TestLegacyUISectionIgnored(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	s, _ := Load(path)
-	c := s.File()
-	c.Password = "pw"
-	c.UI = UIConfig{Username: "u", Password: "p"}
-	if err := s.Update(c); err != nil {
+	legacy := "dest: /b\npassword: pw\nui:\n    username: u\n    password: p\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{EnvPassword, EnvUIUser, EnvUIPassword} {
-		t.Setenv(k, "")
+	s, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	s2, _ := Load(path)
-	got := s2.Get()
-	if got.Password != "pw" || got.UI.Password != "p" || got.UI.Username != "u" {
-		t.Errorf("empty env vars overrode config: %+v", got)
+	if err := s.Update(s.File()); err != nil {
+		t.Fatal(err)
 	}
-	if PasswordFromEnv() {
-		t.Error("empty MYSYNC_PASSWORD reported as set")
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "ui:") || !strings.Contains(string(data), "password: pw") {
+		t.Errorf("rewritten config:\n%s", data)
 	}
 }

@@ -97,14 +97,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
-	ui := s.svc.Config().UI
-	if ui.Username == "" || ui.Password == "" {
+	user, password, enabled := config.UICredentials()
+	if !enabled {
 		return true
 	}
 	u, p, ok := r.BasicAuth()
 	return ok &&
-		subtle.ConstantTimeCompare([]byte(u), []byte(ui.Username)) == 1 &&
-		subtle.ConstantTimeCompare([]byte(p), []byte(ui.Password)) == 1
+		subtle.ConstantTimeCompare([]byte(u), []byte(user)) == 1 &&
+		subtle.ConstantTimeCompare([]byte(p), []byte(password)) == 1
 }
 
 func (s *Server) render(w http.ResponseWriter, page string, data map[string]any) {
@@ -222,11 +222,11 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 // configForm is the editable representation of the config in the UI.
 type configForm struct {
-	Sources, Excludes                              string
-	Dest, Prefix, VolumeSize, MaxBackupSize        string
-	Encryption, Compression, Schedule              string
-	Listen, UIUser                                 string
-	HasPassword, PasswordEnv, HasUIPassword, UIEnv bool
+	Sources, Excludes                       string
+	Dest, Prefix, VolumeSize, MaxBackupSize string
+	Encryption, Compression, Schedule       string
+	Listen                                  string
+	HasPassword, UIAuth                     bool
 }
 
 func formFromConfig(c config.Config) configForm {
@@ -234,7 +234,7 @@ func formFromConfig(c config.Config) configForm {
 	for _, s := range c.Sources {
 		src = append(src, s.Name+" = "+s.Path)
 	}
-	_, uiEnv := config.EnvSet(config.EnvUIPassword)
+	_, _, uiAuth := config.UICredentials()
 	return configForm{
 		Sources:       strings.Join(src, "\n"),
 		Excludes:      strings.Join(c.Excludes, "\n"),
@@ -246,11 +246,8 @@ func formFromConfig(c config.Config) configForm {
 		Compression:   c.Compression,
 		Schedule:      c.Schedule,
 		Listen:        c.Listen,
-		UIUser:        c.UI.Username,
 		HasPassword:   c.Password != "",
-		PasswordEnv:   config.PasswordFromEnv(),
-		HasUIPassword: c.UI.Password != "",
-		UIEnv:         uiEnv,
+		UIAuth:        uiAuth,
 	}
 }
 
@@ -310,16 +307,10 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	c.Encryption = r.FormValue("encryption")
 	c.Compression = r.FormValue("compression")
 	c.Schedule = strings.TrimSpace(r.FormValue("schedule"))
-	c.UI.Username = strings.TrimSpace(r.FormValue("ui_user"))
 	if pw := r.FormValue("password"); pw != "" {
 		c.Password = pw
 	} else if r.FormValue("clear_password") == "1" {
 		c.Password = ""
-	}
-	if pw := r.FormValue("ui_password"); pw != "" {
-		c.UI.Password = pw
-	} else if r.FormValue("clear_ui_password") == "1" {
-		c.UI.Password = ""
 	}
 	if err := s.svc.UpdateConfig(c); err != nil {
 		form := formFromConfig(c)

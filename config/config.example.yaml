@@ -1,5 +1,5 @@
 # my_sync configuration (copy to config.yaml)
-# Secrets can also be supplied via env: MYSYNC_PASSWORD, MYSYNC_UI_USER, MYSYNC_UI_PASSWORD
+# The web UI login is set via env only: MYSYNC_UI_USER, MYSYNC_UI_PASSWORD
 
 # Web UI listen address (change requires restart).
 listen: ":8080"
@@ -53,8 +53,3 @@ max_backup_size: ""
 
 # Automatic backups: empty = off, "6h" / "30m" = interval, "02:30" = daily.
 schedule: "02:30"
-
-# Basic auth for the web UI (enabled when both are set).
-ui:
-  username: admin
-  password: ""

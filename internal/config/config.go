@@ -15,12 +15,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Environment variables that override values from the config file.
+// Environment variables. The web UI login is configured only through
+// MYSYNC_UI_USER / MYSYNC_UI_PASSWORD; the archive password only through the
+// config file (and the UI that edits it).
 const (
-	EnvPassword   = "MYSYNC_PASSWORD"
 	EnvUIUser     = "MYSYNC_UI_USER"
 	EnvUIPassword = "MYSYNC_UI_PASSWORD"
 	EnvListen     = "MYSYNC_LISTEN"
+	// EnvLegacyPassword is no longer read; it is only detected to warn.
+	EnvLegacyPassword = "MYSYNC_PASSWORD"
 )
 
 // Supported encryption and compression methods.
@@ -37,12 +40,6 @@ const (
 type Source struct {
 	Name string `yaml:"name" json:"name"`
 	Path string `yaml:"path" json:"path"`
-}
-
-// UIConfig holds the optional HTTP basic auth credentials of the web UI.
-type UIConfig struct {
-	Username string `yaml:"username" json:"username"`
-	Password string `yaml:"password" json:"-"`
 }
 
 // Config is the full application configuration.
@@ -64,8 +61,7 @@ type Config struct {
 	MaxBackupSize string `yaml:"max_backup_size" json:"max_backup_size"`
 	// Schedule is either empty (disabled), a Go duration ("6h", "30m")
 	// meaning "every interval", or a daily time "HH:MM".
-	Schedule string   `yaml:"schedule" json:"schedule"`
-	UI       UIConfig `yaml:"ui" json:"ui"`
+	Schedule string `yaml:"schedule" json:"schedule"`
 }
 
 // Default returns a configuration with sensible defaults.
@@ -178,24 +174,23 @@ func (c *Config) Validate() error {
 }
 
 // EnvSet reports the value of an environment variable that is set and not
-// empty. Empty values are ignored so that docker-compose entries such as
-// MYSYNC_PASSWORD: ${MYSYNC_PASSWORD:-} do not wipe values from the file.
+// empty, so that docker-compose entries such as
+// MYSYNC_UI_PASSWORD: ${MYSYNC_UI_PASSWORD:-} count as unset.
 func EnvSet(name string) (string, bool) {
 	v := os.Getenv(name)
 	return v, v != ""
 }
 
-// ApplyEnv overrides secrets and listen address from environment variables.
+// UICredentials returns the web UI basic auth credentials from the
+// environment. Authentication is enabled only when both are set.
+func UICredentials() (user, password string, enabled bool) {
+	user, _ = EnvSet(EnvUIUser)
+	password, _ = EnvSet(EnvUIPassword)
+	return user, password, user != "" && password != ""
+}
+
+// ApplyEnv overrides the listen address from the environment.
 func (c *Config) ApplyEnv() {
-	if v, ok := EnvSet(EnvPassword); ok {
-		c.Password = v
-	}
-	if v, ok := EnvSet(EnvUIUser); ok {
-		c.UI.Username = v
-	}
-	if v, ok := EnvSet(EnvUIPassword); ok {
-		c.UI.Password = v
-	}
 	if v, ok := EnvSet(EnvListen); ok {
 		c.Listen = v
 	}
@@ -380,14 +375,8 @@ func (s *Store) Update(c Config) error {
 	return nil
 }
 
-// PasswordFromEnv reports whether the archive password comes from the env.
-func PasswordFromEnv() bool {
-	_, ok := EnvSet(EnvPassword)
-	return ok
-}
-
 const fileHeader = `# my_sync configuration
-# Secrets can also be supplied via env: MYSYNC_PASSWORD, MYSYNC_UI_USER, MYSYNC_UI_PASSWORD
+# The web UI login is set via env only: MYSYNC_UI_USER, MYSYNC_UI_PASSWORD
 `
 
 func writeFile(path string, c Config) error {
