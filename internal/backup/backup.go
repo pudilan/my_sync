@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"my_sync/internal/config"
@@ -357,40 +358,76 @@ func archive(ctx context.Context, cfg config.Config, id, dir string, prev *index
 	}
 
 	limit := cfg.MaxBackupBytes()
-	vw := newVolumeWriter(dir, cfg.Prefix+"_"+id, cfg.VolumeBytes(), cfg.Password, cfg.Encryption, cfg.Compression)
+	vw := newVolumeWriter(dir, cfg.Prefix+"_"+id, cfg.VolumeBytes(), newEntryOptions(cfg))
 	prog := Progress{Phase: PhaseArchiving, FilesTotal: len(p.todo), BytesTotal: p.todoBytes}
+	var bytesDone atomic.Int64
+	onBytes := func(n int64) { bytesDone.Add(n) }
 	var lastReport time.Time
-	onBytes := func(n int64) {
-		prog.BytesDone += n
-		if time.Since(lastReport) > 200*time.Millisecond {
+	report := func(force bool) {
+		if force || time.Since(lastReport) > 200*time.Millisecond {
 			lastReport = time.Now()
+			prog.BytesDone = bytesDone.Load()
 			rep.Progress(prog)
 		}
 	}
-	for _, sf := range p.todo {
+	// The writer streams large files itself; progress is reported from its
+	// read callback so it keeps moving during long files.
+	onStreamBytes := func(n int64) {
+		bytesDone.Add(n)
+		report(false)
+	}
+
+	opts := newEntryOptions(cfg)
+	pl := startPipeline(ctx, p.todo, cfg.WorkerCount(), func(ctx context.Context, sf scannedFile) (*preparedEntry, bool, error) {
+		return prepareEntry(ctx, sf, opts, onBytes)
+	})
+	fail := func(err error) (*index.Index, error) {
+		pl.stop()
+		vw.abort()
+		return nil, err
+	}
+	for j := pl.next(); j != nil; j = pl.next() {
 		if err := ctx.Err(); err != nil {
-			vw.abort()
-			return nil, err
+			return fail(err)
 		}
-		// Safety net for files that grew after the scan: never exceed the limit.
-		if limit > 0 && vw.written()+estimateArchived(sf) > limit {
-			ix.Stats.Deferred++
-			ix.Stats.DeferredBytes += sf.Size
-			prog.FilesDone++
-			continue
-		}
+		sf := j.sf
 		prog.Current = sf.Key
-		rep.Progress(prog)
-		vol, n, sum, err := vw.add(ctx, sf, onBytes)
+		report(true)
+		var (
+			vol, sum string
+			n        int64
+			err      error
+		)
+		switch {
+		case j.err != nil:
+			err = j.err
+		case j.stream:
+			// Safety net for files that grew after the scan: never exceed the limit.
+			if limit > 0 && vw.written()+estimateArchived(sf) > limit {
+				ix.Stats.Deferred++
+				ix.Stats.DeferredBytes += sf.Size
+				prog.FilesDone++
+				continue
+			}
+			vol, n, sum, err = vw.addStream(ctx, sf, onStreamBytes)
+		default:
+			if limit > 0 && vw.written()+preparedSize(j.entry) > limit {
+				ix.Stats.Deferred++
+				ix.Stats.DeferredBytes += sf.Size
+				prog.FilesDone++
+				continue
+			}
+			n, sum = j.entry.size, j.entry.sha256
+			vol, err = vw.addPrepared(j.entry)
+			j.entry = nil // release the payload
+		}
 		prog.FilesDone++
 		if err != nil {
 			if ctx.Err() != nil {
-				vw.abort()
-				return nil, ctx.Err()
+				return fail(ctx.Err())
 			}
 			if isWriteErr(err) {
-				vw.abort()
-				return nil, fmt.Errorf("写入压缩包失败: %w", err)
+				return fail(fmt.Errorf("写入压缩包失败: %w", err))
 			}
 			msg := fmt.Sprintf("%s: %v", sf.Key, err)
 			rep.Log("文件读取失败，跳过 " + msg)
@@ -414,9 +451,18 @@ func archive(ctx context.Context, cfg config.Config, id, dir string, prev *index
 		}
 		ix.Stats.Bytes += n
 	}
-	vols, err := vw.close()
-	if err != nil {
+	pl.stop()
+	if err := ctx.Err(); err != nil {
+		vw.abort()
+		return nil, err
+	}
+	report(true)
+	if err := vw.close(); err != nil {
 		return nil, fmt.Errorf("写入压缩包失败: %w", err)
+	}
+	var vols []index.Volume
+	for _, v := range vw.volumes {
+		vols = append(vols, index.Volume{Name: v.name, Size: v.size, Files: v.files, SHA256: v.sha256})
 	}
 	ix.Volumes = vols
 	if ix.Stats.Added+ix.Stats.Modified+ix.Stats.Deleted == 0 {
@@ -472,7 +518,7 @@ func hashFile(ctx context.Context, path string) (string, error) {
 	}
 	defer f.Close()
 	h := sha256.New()
-	if _, err := io.Copy(h, &ctxReader{ctx: ctx, r: f}); err != nil {
+	if _, err := io.CopyBuffer(h, &ctxReader{ctx: ctx, r: f}, make([]byte, readBufSize)); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil

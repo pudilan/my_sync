@@ -125,7 +125,9 @@ missing). See `config/config.example.yaml` for all keys:
 | `sources` | list of `{name, path}`; `name` is the top-level folder in the archives |
 | `excludes` | glob patterns; without `/` match any file/dir name, with `/` match the path relative to the source |
 | `password` / `encryption` | archive password (empty = none); `aes256` or `zipcrypto` |
-| `compression` | `deflate` or `store` |
+| `compression` | `auto` (default: store known compressed formats, deflate the rest), `deflate` or `store` |
+| `compression_level` | deflate level 1 (fastest) to 9 (smallest), default 5 |
+| `workers` | files compressed/encrypted in parallel, `0` = number of CPUs |
 | `volume_size` | e.g. `500MB`, `4GB`; empty/`0` = no split |
 | `max_backup_size` | archive bytes per run, e.g. `50GB`; empty/`0` = unlimited |
 | `schedule` | empty = off, `6h` = every 6 hours, `02:30` = daily |
@@ -144,6 +146,20 @@ Environment variables:
 | `MYSYNC_CONFIG` | config file path |
 
 Empty values count as unset.
+
+## Performance
+
+- Compression uses [klauspost/compress](https://github.com/klauspost/compress)
+  deflate (about 3.5x faster than the standard library at the same ratio);
+  incompressible data costs almost no CPU.
+- Files up to 8 MB are read, compressed and encrypted in memory by `workers`
+  goroutines in parallel and written in path order by a single writer;
+  larger files are streamed by the writer (one CPU per large file).
+  Memory use is roughly `3 x workers x 8 MB`.
+- Reads use 1 MB and writes 4 MB buffers, which matters a lot on network or
+  Docker Desktop bind mounts where every system call is expensive.
+- Already compressed data (photos, videos, archives, installers) cannot get
+  smaller; `auto` stores it without spending CPU on it.
 
 ## Backing up with limited disk space
 

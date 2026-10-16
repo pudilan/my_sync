@@ -37,8 +37,15 @@ password: ""
 # zipcrypto: weak, but every zip tool including `unzip` and Explorer opens it.
 encryption: aes256
 
-# deflate (compress) or store (no compression, faster for media files).
-compression: deflate
+# auto: store already compressed formats (jpg, mp4, zip, dmg, docx, pdf, ...)
+#       as is and deflate everything else (recommended)
+# deflate: deflate every file; store: no compression at all.
+# In all modes a small file that does not shrink is stored as is.
+compression: auto
+# Deflate level 1 (fastest) .. 9 (smallest).
+compression_level: 5
+# Files compressed/encrypted in parallel; 0 = number of CPUs.
+workers: 0
 
 # Maximum size of each zip volume, e.g. 500MB, 4GB. Empty or 0 = no split.
 # Every volume is a complete zip that can be extracted on its own; a single

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,8 +32,12 @@ const (
 	EncryptionAES256    = "aes256"
 	EncryptionZipCrypto = "zipcrypto"
 
+	CompressionAuto    = "auto" // store already compressed formats, deflate the rest
 	CompressionDeflate = "deflate"
 	CompressionStore   = "store"
+
+	DefaultCompressionLevel = 5
+	MaxWorkers              = 64
 )
 
 // Source is one directory to back up. Name becomes the top-level folder
@@ -52,6 +57,11 @@ type Config struct {
 	Password    string   `yaml:"password" json:"-"`
 	Encryption  string   `yaml:"encryption" json:"encryption"`
 	Compression string   `yaml:"compression" json:"compression"`
+	// CompressionLevel is the deflate level, 1 (fastest) to 9 (smallest).
+	CompressionLevel int `yaml:"compression_level" json:"compression_level"`
+	// Workers is the number of files compressed and encrypted in parallel;
+	// 0 means one per CPU.
+	Workers int `yaml:"workers" json:"workers"`
 	// VolumeSize is a human readable size such as "500MB" or "2GB".
 	// Empty or "0" disables splitting.
 	VolumeSize string `yaml:"volume_size" json:"volume_size"`
@@ -71,7 +81,7 @@ func Default() Config {
 		Dest:        "/backups",
 		Prefix:      "backup",
 		Encryption:  EncryptionAES256,
-		Compression: CompressionDeflate,
+		Compression: CompressionAuto,
 		VolumeSize:  "1GB",
 		Excludes:    []string{".DS_Store", ".localized", "Thumbs.db", "*.tmp", "~$*"},
 	}
@@ -95,6 +105,9 @@ func (c *Config) Normalize() {
 	c.Compression = strings.ToLower(strings.TrimSpace(c.Compression))
 	if c.Compression == "" {
 		c.Compression = d.Compression
+	}
+	if c.CompressionLevel == 0 {
+		c.CompressionLevel = DefaultCompressionLevel
 	}
 	c.Dest = strings.TrimSpace(c.Dest)
 	if c.Dest != "" {
@@ -136,9 +149,15 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Sprintf("encryption 不支持: %q (可选 aes256 / zipcrypto)", c.Encryption))
 	}
 	switch c.Compression {
-	case CompressionDeflate, CompressionStore:
+	case CompressionAuto, CompressionDeflate, CompressionStore:
 	default:
-		errs = append(errs, fmt.Sprintf("compression 不支持: %q (可选 deflate / store)", c.Compression))
+		errs = append(errs, fmt.Sprintf("compression 不支持: %q (可选 auto / deflate / store)", c.Compression))
+	}
+	if c.CompressionLevel < 1 || c.CompressionLevel > 9 {
+		errs = append(errs, fmt.Sprintf("compression_level 应为 1-9: %d", c.CompressionLevel))
+	}
+	if c.Workers < 0 || c.Workers > MaxWorkers {
+		errs = append(errs, fmt.Sprintf("workers 应为 0-%d (0 = CPU 核数): %d", MaxWorkers, c.Workers))
 	}
 	if _, err := ParseSize(c.VolumeSize); err != nil {
 		errs = append(errs, "volume_size: "+err.Error())
@@ -200,6 +219,14 @@ func (c *Config) ApplyEnv() {
 func (c *Config) VolumeBytes() int64 {
 	n, _ := ParseSize(c.VolumeSize)
 	return n
+}
+
+// WorkerCount returns the effective number of parallel workers.
+func (c Config) WorkerCount() int {
+	if c.Workers > 0 {
+		return c.Workers
+	}
+	return max(runtime.NumCPU(), 1)
 }
 
 // MaxBackupBytes returns the parsed per-run size limit (0 = unlimited).

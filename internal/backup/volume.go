@@ -1,44 +1,216 @@
 package backup
 
 import (
+	"archive/zip"
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"hash"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 	"unicode/utf8"
 
-	"github.com/yeka/zip"
+	"github.com/klauspost/compress/flate"
 
 	"my_sync/internal/config"
-	"my_sync/internal/index"
+	"my_sync/internal/zipcrypt"
 )
+
+const (
+	// smallFileLimit is the largest file prepared in memory by the parallel
+	// workers; larger files are streamed by the writer.
+	smallFileLimit = 8 << 20
+	readBufSize    = 1 << 20
+	writeBufSize   = 4 << 20
+	zipVersion20   = 20
+)
+
+// entryOptions controls how file contents are encoded.
+type entryOptions struct {
+	password    string
+	encryption  string
+	compression string
+	level       int
+}
+
+func newEntryOptions(cfg config.Config) entryOptions {
+	return entryOptions{
+		password:    cfg.Password,
+		encryption:  cfg.Encryption,
+		compression: cfg.Compression,
+		level:       cfg.CompressionLevel,
+	}
+}
+
+func (o entryOptions) aes() bool {
+	return o.password != "" && o.encryption != config.EncryptionZipCrypto
+}
+
+// methodFor picks the compression method of a file.
+func (o entryOptions) methodFor(name string) uint16 {
+	switch o.compression {
+	case config.CompressionStore:
+		return zip.Store
+	case config.CompressionAuto:
+		if isCompressedExt(name) {
+			return zip.Store
+		}
+	}
+	return zip.Deflate
+}
+
+// markEncrypted sets the encryption flag; for AES the real method moves into
+// the 0x9901 extra field and the header method becomes 99.
+func (o entryOptions) markEncrypted(fh *zip.FileHeader, aeVersion uint16) {
+	if o.password == "" {
+		return
+	}
+	fh.Flags |= 0x1
+	if o.aes() {
+		fh.Extra = append(fh.Extra, zipcrypt.AESExtra(aeVersion, fh.Method)...)
+		fh.Method = zipcrypt.MethodAES
+	}
+}
+
+var flatePools [10]sync.Pool
+
+func getFlate(w io.Writer, level int) *flate.Writer {
+	if fw, ok := flatePools[level].Get().(*flate.Writer); ok {
+		fw.Reset(w)
+		return fw
+	}
+	fw, _ := flate.NewWriter(w, level)
+	return fw
+}
+
+func putFlate(fw *flate.Writer, level int) { flatePools[level].Put(fw) }
+
+// newHeader builds the common header fields of an entry.
+func newHeader(sf scannedFile, method uint16) *zip.FileHeader {
+	fh := &zip.FileHeader{Name: sf.Key, Method: method}
+	setModTime(fh, time.Unix(0, sf.ModTime))
+	fh.SetMode(sf.Mode.Perm())
+	if !isASCII(sf.Key) && utf8.ValidString(sf.Key) {
+		fh.Flags |= 0x800 // names are UTF-8
+	}
+	return fh
+}
+
+// preparedEntry is a fully compressed and encrypted entry ready to be
+// copied into a volume.
+type preparedEntry struct {
+	fh      *zip.FileHeader
+	payload []byte
+	size    int64 // uncompressed bytes
+	sha256  string
+}
+
+// prepareEntry reads a small file and encodes it in memory. It is safe for
+// concurrent use. tooBig reports that the file grew beyond what is sensible
+// to buffer; the caller then streams it instead.
+func prepareEntry(ctx context.Context, sf scannedFile, o entryOptions, onBytes func(int64)) (e *preparedEntry, tooBig bool, err error) {
+	f, err := os.Open(sf.Abs)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	const maxBuffered = 4 * smallFileLimit
+	data := make([]byte, 0, sf.Size+1)
+	buf := bytes.NewBuffer(data)
+	if _, err := buf.ReadFrom(io.LimitReader(&ctxReader{ctx: ctx, r: f, onBytes: onBytes}, maxBuffered+1)); err != nil {
+		return nil, false, err
+	}
+	data = buf.Bytes()
+	if len(data) > maxBuffered {
+		return nil, true, nil
+	}
+	sum := sha256.Sum256(data)
+	crc := crc32.ChecksumIEEE(data)
+
+	method := o.methodFor(sf.Key)
+	body := data
+	if method == zip.Deflate {
+		var out bytes.Buffer
+		out.Grow(len(data)/2 + 64)
+		fw := getFlate(&out, o.level)
+		fw.Write(data)
+		fw.Close()
+		putFlate(fw, o.level)
+		if out.Len() < len(data) {
+			body = out.Bytes()
+		} else {
+			method = zip.Store // incompressible: store as is
+		}
+	}
+	fh := newHeader(sf, method)
+	fh.CRC32 = crc
+	if o.password != "" {
+		var out bytes.Buffer
+		out.Grow(len(body) + zipcrypt.AESOverhead)
+		var w io.WriteCloser
+		if o.aes() {
+			w, err = zipcrypt.NewAESWriter(&out, o.password)
+			fh.CRC32 = 0 // AE-2 does not store the CRC
+		} else {
+			w, err = zipcrypt.NewZipCryptoWriter(&out, o.password, byte(crc>>24))
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		w.Write(body)
+		w.Close()
+		body = out.Bytes()
+		o.markEncrypted(fh, 2)
+	}
+	fh.CompressedSize64 = uint64(len(body))
+	fh.UncompressedSize64 = uint64(len(data))
+	fh.CreatorVersion = fh.CreatorVersion&0xff00 | zipVersion20
+	fh.ReaderVersion = zipVersion20
+	return &preparedEntry{fh: fh, payload: body, size: int64(len(data)), sha256: hex.EncodeToString(sum[:])}, false, nil
+}
 
 // volumeWriter writes files into a sequence of standalone zip archives.
 // Volumes are not a spanned multi-part archive: every volume is a complete
 // zip file that can be extracted on its own. A file is never split across
 // volumes, so a file larger than the volume size gets a volume of its own.
+// It is used by a single goroutine.
 type volumeWriter struct {
-	dir        string
-	baseName   string // "<prefix>_<backup id>"
-	limit      int64  // 0 = unlimited
-	password   string
-	encryption string
-	method     uint16
+	dir      string
+	baseName string // "<prefix>_<backup id>"
+	limit    int64  // 0 = unlimited
+	opts     entryOptions
 
 	seq     int
 	cur     *openVolume
-	volumes []index.Volume
+	volumes []volumeInfo
+
+	// Header and real method of the entry being streamed, read by the
+	// compressor that archive/zip invokes from CreateHeader.
+	streamFH     *zip.FileHeader
+	streamMethod uint16
+	streamComp   io.WriteCloser
+	readBuf      []byte
+}
+
+type volumeInfo struct {
+	name   string
+	size   int64
+	files  int
+	sha256 string
 }
 
 type openVolume struct {
 	name  string
 	f     *os.File
+	bw    *bufio.Writer
 	cw    *countHashWriter
 	zw    *zip.Writer
 	files int
@@ -57,19 +229,8 @@ func (c *countHashWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func newVolumeWriter(dir, baseName string, limit int64, password, encryption, compression string) *volumeWriter {
-	method := zip.Deflate
-	if compression == config.CompressionStore {
-		method = zip.Store
-	}
-	return &volumeWriter{
-		dir:        dir,
-		baseName:   baseName,
-		limit:      limit,
-		password:   password,
-		encryption: encryption,
-		method:     method,
-	}
+func newVolumeWriter(dir, baseName string, limit int64, opts entryOptions) *volumeWriter {
+	return &volumeWriter{dir: dir, baseName: baseName, limit: limit, opts: opts}
 }
 
 // entryOverhead estimates zip headers, encryption and descriptor bytes.
@@ -85,11 +246,16 @@ func estimateArchived(sf scannedFile) int64 {
 	return sf.Size + sf.Size/4096 + entryOverhead(sf.Key) + 128
 }
 
+// preparedSize is the exact payload plus a bound for its headers.
+func preparedSize(e *preparedEntry) int64 {
+	return int64(len(e.payload)) + entryOverhead(e.fh.Name) + int64(2*len(e.fh.Extra)) + 128
+}
+
 // written returns the bytes written to all volumes so far.
 func (vw *volumeWriter) written() int64 {
 	var n int64
 	for _, v := range vw.volumes {
-		n += v.Size
+		n += v.size
 	}
 	if vw.cur != nil {
 		n += vw.cur.cw.n
@@ -97,63 +263,145 @@ func (vw *volumeWriter) written() int64 {
 	return n
 }
 
-// add archives one file and returns the volume name and SHA-256 of the
-// data written. The source file is opened before the zip entry is created
-// so that unreadable files leave no trace in the archive.
-func (vw *volumeWriter) add(ctx context.Context, sf scannedFile, onBytes func(int64)) (volume string, size int64, sum string, err error) {
+// ensureRoom starts a new volume if an entry of the given size would push
+// the current one over the limit, and opens a volume if none is open.
+func (vw *volumeWriter) ensureRoom(size int64) error {
+	if vw.cur != nil && vw.limit > 0 && vw.cur.files > 0 && vw.cur.cw.n+size > vw.limit {
+		if err := vw.closeCurrent(); err != nil {
+			return writeError{err}
+		}
+	}
+	if vw.cur == nil {
+		if err := vw.openNext(); err != nil {
+			return writeError{err}
+		}
+	}
+	return nil
+}
+
+// afterEntry closes the volume once it reached the limit.
+func (vw *volumeWriter) afterEntry() error {
+	vw.cur.files++
+	if vw.limit > 0 && vw.cur.cw.n >= vw.limit {
+		if err := vw.closeCurrent(); err != nil {
+			return writeError{err}
+		}
+	}
+	return nil
+}
+
+// addPrepared copies an entry encoded by prepareEntry into the archive.
+func (vw *volumeWriter) addPrepared(e *preparedEntry) (volume string, err error) {
+	if err := vw.ensureRoom(preparedSize(e)); err != nil {
+		return "", err
+	}
+	w, err := vw.cur.zw.CreateRaw(e.fh)
+	if err != nil {
+		return "", writeError{err}
+	}
+	if _, err := w.Write(e.payload); err != nil {
+		return "", writeError{err}
+	}
+	volume = vw.cur.name
+	return volume, vw.afterEntry()
+}
+
+// addStream archives a large file while reading it. The source file is
+// opened before the zip entry is created so that unreadable files leave no
+// trace in the archive.
+func (vw *volumeWriter) addStream(ctx context.Context, sf scannedFile, onBytes func(int64)) (volume string, size int64, sum string, err error) {
 	f, err := os.Open(sf.Abs)
 	if err != nil {
 		return "", 0, "", err
 	}
 	defer f.Close()
-
-	est := sf.Size + entryOverhead(sf.Key)
-	if vw.cur != nil && vw.limit > 0 && vw.cur.files > 0 && vw.cur.cw.n+est > vw.limit {
-		if err := vw.closeCurrent(); err != nil {
-			return "", 0, "", writeError{err}
-		}
-	}
-	if vw.cur == nil {
-		if err := vw.openNext(); err != nil {
-			return "", 0, "", writeError{err}
-		}
+	if err := vw.ensureRoom(estimateArchived(sf)); err != nil {
+		return "", 0, "", err
 	}
 
-	fh := &zip.FileHeader{Name: sf.Key, Method: vw.method}
-	setModTime(fh, time.Unix(0, sf.ModTime))
-	fh.SetMode(sf.Mode.Perm())
-	if !isASCII(sf.Key) && utf8.ValidString(sf.Key) {
-		fh.Flags |= 0x800 // names are UTF-8
-	}
-	if vw.password != "" {
-		fh.SetPassword(vw.password)
-		if vw.encryption == config.EncryptionZipCrypto {
-			fh.SetEncryptionMethod(zip.StandardEncryption)
-		} else {
-			fh.SetEncryptionMethod(zip.AES256Encryption)
-		}
-	}
+	method := vw.opts.methodFor(sf.Key)
+	fh := newHeader(sf, method)
+	vw.opts.markEncrypted(fh, 1) // AE-1: archive/zip stores the CRC
+	vw.streamFH, vw.streamMethod = fh, method
 	w, err := vw.cur.zw.CreateHeader(fh)
 	if err != nil {
 		return "", 0, "", writeError{err}
 	}
-	vw.cur.files++
+	if vw.readBuf == nil {
+		vw.readBuf = make([]byte, readBufSize)
+	}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(errWrapWriter{w}, h), &ctxReader{ctx: ctx, r: f, onBytes: onBytes})
+	n, err := io.CopyBuffer(io.MultiWriter(errWrapWriter{w}, h), &ctxReader{ctx: ctx, r: f, onBytes: onBytes}, vw.readBuf)
 	if err != nil {
 		return "", n, "", err
+	}
+	// Finish the entry now so that its full size counts for the volume and
+	// per-run limits; archive/zip closes the compressor again later, which
+	// is a no-op.
+	if err := vw.streamComp.Close(); err != nil {
+		return "", n, "", writeError{err}
 	}
 	if err := vw.cur.zw.Flush(); err != nil {
 		return "", n, "", writeError{err}
 	}
 	volume = vw.cur.name
-	if vw.limit > 0 && vw.cur.cw.n >= vw.limit {
-		if err := vw.closeCurrent(); err != nil {
-			return "", n, "", writeError{err}
-		}
+	if err := vw.afterEntry(); err != nil {
+		return "", n, "", err
 	}
 	return volume, n, hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// compressor encodes streamed entries: deflate (klauspost) and/or the
+// configured encryption, chained as data -> deflate -> encrypt -> archive.
+func (vw *volumeWriter) compressor(out io.Writer) (io.WriteCloser, error) {
+	var enc io.WriteCloser = nopWriteCloser{out}
+	if o := vw.opts; o.password != "" {
+		var err error
+		if o.aes() {
+			enc, err = zipcrypt.NewAESWriter(out, o.password)
+		} else {
+			// Entries carry a data descriptor, so readers verify the
+			// password against the DOS time instead of the CRC.
+			enc, err = zipcrypt.NewZipCryptoWriter(out, o.password, byte(vw.streamFH.ModifiedTime>>8))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if vw.streamMethod == zip.Deflate {
+		enc = &chainWriter{fw: getFlate(enc, vw.opts.level), level: vw.opts.level, next: enc}
+	}
+	vw.streamComp = enc
+	return enc, nil
+}
+
+// chainWriter deflates into an encrypting (or plain) writer. Close is
+// idempotent.
+type chainWriter struct {
+	fw     *flate.Writer
+	level  int
+	next   io.WriteCloser
+	closed bool
+}
+
+func (c *chainWriter) Write(p []byte) (int, error) { return c.fw.Write(p) }
+
+func (c *chainWriter) Close() error {
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	err := c.fw.Close()
+	putFlate(c.fw, c.level)
+	if cerr := c.next.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 func (vw *volumeWriter) openNext() error {
 	vw.seq++
@@ -162,8 +410,13 @@ func (vw *volumeWriter) openNext() error {
 	if err != nil {
 		return err
 	}
-	cw := &countHashWriter{w: f, h: sha256.New()}
-	vw.cur = &openVolume{name: name, f: f, cw: cw, zw: zip.NewWriter(cw)}
+	bw := bufio.NewWriterSize(f, writeBufSize)
+	cw := &countHashWriter{w: bw, h: sha256.New()}
+	zw := zip.NewWriter(cw)
+	for _, m := range []uint16{zip.Store, zip.Deflate, zipcrypt.MethodAES} {
+		zw.RegisterCompressor(m, vw.compressor)
+	}
+	vw.cur = &openVolume{name: name, f: f, bw: bw, cw: cw, zw: zw}
 	return nil
 }
 
@@ -175,6 +428,9 @@ func (vw *volumeWriter) closeCurrent() error {
 	vw.cur = nil
 	err := v.zw.Close()
 	if err == nil {
+		err = v.bw.Flush()
+	}
+	if err == nil {
 		err = v.f.Sync()
 	}
 	if cerr := v.f.Close(); err == nil {
@@ -183,20 +439,17 @@ func (vw *volumeWriter) closeCurrent() error {
 	if err != nil {
 		return fmt.Errorf("关闭压缩包 %s: %w", v.name, err)
 	}
-	vw.volumes = append(vw.volumes, index.Volume{
-		Name:   v.name,
-		Size:   v.cw.n,
-		Files:  v.files,
-		SHA256: hex.EncodeToString(v.cw.h.Sum(nil)),
+	vw.volumes = append(vw.volumes, volumeInfo{
+		name:   v.name,
+		size:   v.cw.n,
+		files:  v.files,
+		sha256: hex.EncodeToString(v.cw.h.Sum(nil)),
 	})
 	return nil
 }
 
-// close finalizes the open volume and returns all volumes written.
-func (vw *volumeWriter) close() ([]index.Volume, error) {
-	err := vw.closeCurrent()
-	return vw.volumes, err
-}
+// close finalizes the open volume.
+func (vw *volumeWriter) close() error { return vw.closeCurrent() }
 
 // abort releases file handles without finalizing; the caller removes files.
 func (vw *volumeWriter) abort() {

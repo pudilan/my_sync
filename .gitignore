@@ -4,3 +4,5 @@
 /.env
 /.playwright-mcp/
 /docker-compose.yaml
+*.swp
+*.swo

@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -109,6 +110,7 @@ func (s *Server) authorized(r *http.Request) bool {
 
 func (s *Server) render(w http.ResponseWriter, page string, data map[string]any) {
 	data["Page"] = page
+	data["CPUs"] = runtime.NumCPU()
 	data["Running"] = s.svc.Running()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.pages[page].Execute(w, data); err != nil {
@@ -226,6 +228,7 @@ type configForm struct {
 	Dest, Prefix, VolumeSize, MaxBackupSize string
 	Encryption, Compression, Schedule       string
 	Listen                                  string
+	CompressionLevel, Workers               int
 	HasPassword, UIAuth                     bool
 }
 
@@ -236,18 +239,20 @@ func formFromConfig(c config.Config) configForm {
 	}
 	_, _, uiAuth := config.UICredentials()
 	return configForm{
-		Sources:       strings.Join(src, "\n"),
-		Excludes:      strings.Join(c.Excludes, "\n"),
-		Dest:          c.Dest,
-		Prefix:        c.Prefix,
-		VolumeSize:    c.VolumeSize,
-		MaxBackupSize: c.MaxBackupSize,
-		Encryption:    c.Encryption,
-		Compression:   c.Compression,
-		Schedule:      c.Schedule,
-		Listen:        c.Listen,
-		HasPassword:   c.Password != "",
-		UIAuth:        uiAuth,
+		Sources:          strings.Join(src, "\n"),
+		Excludes:         strings.Join(c.Excludes, "\n"),
+		Dest:             c.Dest,
+		Prefix:           c.Prefix,
+		VolumeSize:       c.VolumeSize,
+		MaxBackupSize:    c.MaxBackupSize,
+		Encryption:       c.Encryption,
+		Compression:      c.Compression,
+		CompressionLevel: c.CompressionLevel,
+		Workers:          c.Workers,
+		Schedule:         c.Schedule,
+		Listen:           c.Listen,
+		HasPassword:      c.Password != "",
+		UIAuth:           uiAuth,
 	}
 }
 
@@ -306,6 +311,8 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	c.MaxBackupSize = strings.TrimSpace(r.FormValue("max_backup_size"))
 	c.Encryption = r.FormValue("encryption")
 	c.Compression = r.FormValue("compression")
+	c.CompressionLevel, _ = strconv.Atoi(strings.TrimSpace(r.FormValue("compression_level")))
+	c.Workers, _ = strconv.Atoi(strings.TrimSpace(r.FormValue("workers")))
 	c.Schedule = strings.TrimSpace(r.FormValue("schedule"))
 	if pw := r.FormValue("password"); pw != "" {
 		c.Password = pw

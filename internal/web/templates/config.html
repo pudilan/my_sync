@@ -26,9 +26,21 @@
     <div>
       <label>压缩方式</label>
       <select name="compression">
-        <option value="deflate" {{if eq .Form.Compression "deflate"}}selected{{end}}>deflate (压缩)</option>
+        <option value="auto" {{if eq .Form.Compression "auto"}}selected{{end}}>auto (推荐：图片/视频/压缩包等直接存储，其余压缩)</option>
+        <option value="deflate" {{if eq .Form.Compression "deflate"}}selected{{end}}>deflate (全部压缩)</option>
         <option value="store" {{if eq .Form.Compression "store"}}selected{{end}}>store (仅打包)</option>
       </select>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>压缩级别 <small>1 最快 … 9 最小，默认 5</small></label>
+      <input name="compression_level" type="number" min="1" max="9" value="{{.Form.CompressionLevel}}">
+    </div>
+    <div>
+      <label>并行数 <small>同时压缩加密的文件数，0 = CPU 核数 (当前 {{.CPUs}})</small></label>
+      <input name="workers" type="number" min="0" max="64" value="{{.Form.Workers}}">
     </div>
   </div>
 

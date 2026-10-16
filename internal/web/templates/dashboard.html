@@ -10,7 +10,7 @@
       <dt>分卷大小</dt><dd>{{.VolumeLbl}}</dd>
       <dt>单次备份上限</dt><dd>{{.MaxLbl}}</dd>
       <dt>压缩包密码</dt><dd>{{if .Cfg.Password}}已设置 ({{encLabel .Cfg.Encryption}}){{else}}<span class="warn">未设置 (不加密)</span>{{end}}</dd>
-      <dt>压缩方式</dt><dd>{{.Cfg.Compression}}</dd>
+      <dt>压缩方式</dt><dd>{{.Cfg.Compression}} · 级别 {{.Cfg.CompressionLevel}} · 并行 {{.Cfg.WorkerCount}}</dd>
       <dt>定时计划</dt><dd>{{if .Status.Schedule}}{{.Status.Schedule}} · 下次 {{ftime .Status.NextRun}}{{else}}<span class="muted">未启用</span>{{end}}</dd>
     </dl>
   </div>

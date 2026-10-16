@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,48 @@ func TestConfigPageHasNoUICredentials(t *testing.T) {
 	t.Setenv(config.EnvUIPassword, "")
 	if c := do(s, "GET", "/", false, nil).Code; c != http.StatusOK {
 		t.Errorf("auth should be off without MYSYNC_UI_PASSWORD, got %d", c)
+	}
+}
+
+func TestPagesRenderCompressionSettings(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	dash := do(s, "GET", "/", true, nil).Body.String()
+	if !strings.Contains(dash, "并行") || !strings.Contains(dash, "备份历史") {
+		t.Error("dashboard incomplete")
+	}
+	cfgPage := do(s, "GET", "/config", true, nil).Body.String()
+	for _, want := range []string{`name="compression_level"`, `name="workers"`, `value="auto"`, "保存配置"} {
+		if !strings.Contains(cfgPage, want) {
+			t.Errorf("config page lacks %s", want)
+		}
+	}
+}
+
+func TestSaveCompressionSettings(t *testing.T) {
+	s, svc, cfg := newTestServer(t)
+	form := url.Values{
+		"sources": {"src = " + cfg.Sources[0].Path}, "dest": {cfg.Dest}, "prefix": {"backup"},
+		"encryption": {"aes256"}, "compression": {"auto"}, "compression_level": {"1"}, "workers": {"2"},
+	}
+	req := httptest.NewRequest("POST", "/config", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("u", "p")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	got := svc.Config()
+	if got.Compression != "auto" || got.CompressionLevel != 1 || got.Workers != 2 {
+		t.Errorf("saved %+v", got)
+	}
+	form.Set("compression_level", "12")
+	req = httptest.NewRequest("POST", "/config", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("u", "p")
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid level accepted: %d", rec.Code)
 	}
 }
